@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Firebase Auth + RBAC + Admin Panel</title>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import {
+      getAuth, GoogleAuthProvider, signInWithPopup,
+      signOut, onAuthStateChanged
+    } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+    import {
+      getFirestore, doc, getDoc, setDoc, collection,
+      getDocs, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBFr7OT9bJ90fr0pLAfejL4s8jMSDBWQmI",
+      authDomain: "auth-test-20e22.firebaseapp.com",
+      projectId: "auth-test-20e22",
+      storageBucket: "auth-test-20e22.firebasestorage.app",
+      messagingSenderId: "988937822634",
+      appId: "1:988937822634:web:43064a863a0ddb4af54bd3",
+      measurementId: "G-XBWEZZYJX7"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+    const SUPER_ADMIN_EMAIL = "mr.sourabha.shakya@gmail.com";
+
+    window.signIn = () => {
+      signInWithPopup(auth, provider)
+        .then(async (result) => {
+          const user = result.user;
+          const token = result._tokenResponse.idToken;
+
+          // Log user to Firestore
+          await setDoc(doc(db, "users", user.uid), {
+            email: user.email,
+            displayName: user.displayName,
+            lastLogin: serverTimestamp()
+          });
+
+          // Decode JWT
+          const payloadBase64 = token.split('.')[1];
+          const payloadJson = atob(payloadBase64.replace(/-/g, '+').replace(/_/g, '/'));
+          const payload = JSON.parse(payloadJson);
+
+          // Get role
+          const roleDoc = await getDoc(doc(db, "roles", user.uid));
+          const role = roleDoc.exists() ? roleDoc.data().role : "viewer";
+
+          document.getElementById("output").innerText =
+            `✅ Hello ${user.displayName}
+📧 Email: ${user.email}
+🔐 Role: ${role}
+🪪 UID: ${user.uid}
+🌐 Issuer: ${payload.iss}
+🔒 Auth Time: ${new Date(payload.auth_time * 1000).toLocaleString()}
+🕒 Expires At: ${new Date(payload.exp * 1000).toLocaleString()}
+
+📄 Full Payload:
+${JSON.stringify(payload, null, 2)}`;
+
+          document.getElementById("loginBtn").style.display = "none";
+          document.getElementById("logoutBtn").style.display = "inline-block";
+
+          document.getElementById("adminFeature").style.display = role === "admin" ? "block" : "none";
+          document.getElementById("editorFeature").style.display = role === "editor" ? "block" : "none";
+
+          if (user.email === SUPER_ADMIN_EMAIL) {
+            renderAdminPanel();
+          }
+        })
+        .catch((error) => {
+          document.getElementById("output").innerText = `❌ ${error.message}`;
+        });
+    };
+
+    window.signOutUser = () => {
+      signOut(auth).then(() => {
+        document.getElementById("output").innerText = "👋 Logged out successfully.";
+        document.getElementById("loginBtn").style.display = "inline-block";
+        document.getElementById("logoutBtn").style.display = "none";
+        document.getElementById("adminFeature").style.display = "none";
+        document.getElementById("editorFeature").style.display = "none";
+        document.getElementById("adminPanel").style.display = "none";
+      });
+    };
+
+    async function renderAdminPanel() {
+      document.getElementById("adminPanel").style.display = "block";
+      const userList = document.getElementById("userList");
+      userList.innerHTML = "Loading...";
+
+      const snapshot = await getDocs(collection(db, "users"));
+      userList.innerHTML = "";
+
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        const email = data.email;
+        const uid = docSnap.id;
+        const displayName = data.displayName || "No name";
+
+        const roleDoc = await getDoc(doc(db, "roles", uid));
+        const role = roleDoc.exists() ? roleDoc.data().role : "viewer";
+
+        const row = document.createElement("div");
+        row.innerHTML = `
+          <b>${displayName}</b> (${email}) —
+          <select id="role-${uid}">
+            <option value="viewer" ${role === "viewer" ? "selected" : ""}>Viewer</option>
+            <option value="editor" ${role === "editor" ? "selected" : ""}>Editor</option>
+            <option value="admin" ${role === "admin" ? "selected" : ""}>Admin</option>
+          </select>
+          <button onclick="updateRole('${uid}')">Save</button>
+        `;
+        userList.appendChild(row);
+      }
+    }
+
+    window.updateRole = async (uid) => {
+      const selected = document.getElementById(`role-${uid}`).value;
+      await setDoc(doc(db, "roles", uid), { role: selected });
+      alert(`✅ Role updated to '${selected}' for UID: ${uid}`);
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        document.getElementById("loginBtn").style.display = "none";
+        document.getElementById("logoutBtn").style.display = "inline-block";
+      } else {
+        document.getElementById("loginBtn").style.display = "inline-block";
+        document.getElementById("logoutBtn").style.display = "none";
+        document.getElementById("adminFeature").style.display = "none";
+        document.getElementById("editorFeature").style.display = "none";
+        document.getElementById("adminPanel").style.display = "none";
+      }
+    });
+  </script>
+</head>
+<body>
+  <h2>🔐 Firebase Auth + JWT + RBAC + Admin Panel</h2>
+  <button id="loginBtn" onclick="signIn()">Sign In with Google</button>
+  <button id="logoutBtn" onclick="signOutUser()" style="display:none;">Logout</button>
+
+  <div id="adminFeature" style="display:none; background:#eef; padding:10px; margin-top:10px;">
+    🛠️ Admin Feature: Manage platform settings
+  </div>
+
+  <div id="editorFeature" style="display:none; background:#efe; padding:10px; margin-top:10px;">
+    ✏️ Editor Feature: Edit content and articles
+  </div>
+
+  <div id="adminPanel" style="display:none; margin-top: 20px;">
+    <h3>👑 Super Admin Panel (User Role Manager)</h3>
+    <div id="userList">Loading users...</div>
+  </div>
+
+  <pre id="output" style="white-space: pre-wrap; margin-top: 20px; background: #f7f7f7; padding: 10px; border: 1px solid #ccc;"></pre>
+</body>
+</html>
